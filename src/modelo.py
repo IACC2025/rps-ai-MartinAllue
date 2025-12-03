@@ -53,8 +53,8 @@ import numpy as np
 # Importa aqui los modelos que vayas a usar
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-# TODO: Importa los modelos que necesites (KNN, DecisionTree, RandomForest, etc.)
-# from sklearn.neighbors import KNeighborsClassifier
+# TODO: Importa los modelos que necesites (KNN, DecisionTree, RandomForest, etc.)ok
+from sklearn.neighbors import KNeighborsClassifier
 # from sklearn.tree import DecisionTreeClassifier
 # from sklearn.ensemble import RandomForestClassifier
 
@@ -76,12 +76,13 @@ PIERDE_CONTRA = {"piedra": "papel", "papel": "tijera", "tijera": "piedra"}
 # =============================================================================
 # PARTE 1: EXTRACCION DE DATOS (30% de la nota)
 # =============================================================================
+COLUMNAS_REQUERIDAS = ["ronda", "jugada_j1", "jugada_j2", "ganador"]
 
 def cargar_datos(ruta_csv: str = None) -> pd.DataFrame:
     """
     Carga los datos del CSV de partidas.
 
-    TODO: Implementa esta funcion
+    TODO: Implementa esta funcion ok
     - Usa pandas para leer el CSV
     - Maneja el caso de que el archivo no exista
     - Verifica que tenga las columnas necesarias
@@ -92,13 +93,26 @@ def cargar_datos(ruta_csv: str = None) -> pd.DataFrame:
     Returns:
         DataFrame con los datos de las partidas
     """
+
     if ruta_csv is None:
         ruta_csv = RUTA_DATOS
 
-    # TODO: Implementa la carga de datos
-    # Pista: usa pd.read_csv()
+    if not os.path.exists(ruta_csv):
+        raise FileNotFoundError(f"{ruta_csv} no existe")
 
-    pass  # Elimina esta linea cuando implementes
+    try:
+        df = pd.read_csv(ruta_csv)
+    except Exception as error:
+        raise ValueError(f"Error al leer el CSV: {error}") from error
+
+    columnas_faltantes = [col for col in COLUMNAS_REQUERIDAS if col not in df.columns]
+    if columnas_faltantes:
+        raise ValueError(f"Faltan columnas obligatorias en el CSV: {columnas_faltantes}")
+
+    return df
+
+    # TODO: Implementa la carga de datos ok
+    # Pista: usa pd.read_csv()
 
 
 def preparar_datos(df: pd.DataFrame) -> pd.DataFrame:
@@ -122,8 +136,18 @@ def preparar_datos(df: pd.DataFrame) -> pd.DataFrame:
     # - Usa shift(-1) para crear la columna de proxima jugada
     # - Usa dropna() para eliminar filas con NaN
 
-    pass  # Elimina esta linea cuando implementes
+    df["jugada_j1_num"] = df["jugada_j1"].map(JUGADA_A_NUM)
+    df["jugada_j2_num"] = df["jugada_j2"].map(JUGADA_A_NUM)
 
+    df["proxima_jugada_j2"] = df["jugada_j2_num"].shift(-1)
+
+    df = df.dropna()
+
+    df["jugada_j1_num"] = df["jugada_j1_num"].astype(int)
+    df["jugada_j2_num"] = df["jugada_j2_num"].astype(int)
+    df["proxima_jugada_j2"] = df["proxima_jugada_j2"].astype(int)
+
+    return df
 
 # =============================================================================
 # PARTE 2: FEATURE ENGINEERING (30% de la nota)
@@ -159,11 +183,26 @@ def crear_features(df: pd.DataFrame) -> pd.DataFrame:
     # Calcula que porcentaje de veces j2 juega cada opcion
     # Pista: usa expanding().mean() o rolling()
 
+    df["freq_j2_piedra"] = (df["jugada_j2_num"] == 0).expanding().mean()
+    df["freq_j2_papel"] = (df["jugada_j2_num"] == 1).expanding().mean()
+    df["freq_j2_tijera"] = (df["jugada_j2_num"] == 2).expanding().mean()
+
+    df["freq_j2_piedra_5"] = (df["jugada_j2_num"] == 0).rolling(5).mean()
+    df["freq_j2_papel_5"] = (df["jugada_j2_num"] == 1).rolling(5).mean()
+    df["freq_j2_tijera_5"] = (df["jugada_j2_num"] == 2).rolling(5).mean()
+
     # ------------------------------------------
     # TODO: Feature 2 - Lag features (jugadas anteriores)
     # ------------------------------------------
     # Crea columnas con las ultimas 1, 2, 3 jugadas
     # Pista: usa shift(1), shift(2), etc.
+
+    df["j2_lag1"] = df["jugada_j2_num"].shift(1)
+    df["j2_lag2"] = df["jugada_j2_num"].shift(2)
+    df["j2_lag3"] = df["jugada_j2_num"].shift(3)
+
+    df["j1_lag1"] = df["jugada_j1_num"].shift(1)
+    df["j1_lag2"] = df["jugada_j1_num"].shift(2)
 
     # ------------------------------------------
     # TODO: Feature 3 - Resultado anterior
@@ -171,13 +210,47 @@ def crear_features(df: pd.DataFrame) -> pd.DataFrame:
     # Crea una columna con el resultado de la ronda anterior
     # Esto puede revelar patrones (ej: siempre cambia despues de perder)
 
+    def calcular_resultado(fila):
+        a, b = fila["jugada_j1_num"], fila["jugada_j2_num"]
+        if a == b:
+            return 0
+        if (a == 0 and b == 2) or (a == 1 and b == 0) or (a == 2 and b == 1):
+            return 1
+        return -1
+    df["resultado"] = df.apply(calcular_resultado, axis=1)
+    df["resultado_anterior"] = df["resultado"].shift(1)
+
     # ------------------------------------------
     # TODO: Mas features (opcional pero recomendado)
     # ------------------------------------------
     # Agrega mas features que creas utiles
     # Recuerda: mas features relevantes = mejor prediccion
 
-    pass  # Elimina esta linea cuando implementes
+    # FEATURE 4 RACHA ACTUAL
+
+    racha = []
+    actual = 0
+    for r in df["resultado"]:
+        if r == 1:
+            actual = actual + 1 if actual >= 0 else 1
+        elif r == -1:
+            actual = actual - 1 if actual <= 0 else -1
+        else:
+            actual = 0
+        racha.append(actual)
+
+    df["racha"] = racha
+
+    # FEATURE 5 TENDENCIA RECIENTE DE OPONENTE
+
+    df["var_lag1"] = df["jugada_j2_num"] - df["jugada_j2_num"].shift(1)
+    df["var_lag2"] = df["jugada_j2_num"] - df["jugada_j2_num"].shift(2)
+    df["var_lag3"] = df["jugada_j2_num"] - df["jugada_j2_num"].shift(3)
+
+    # Hago una limpieza eliminando filas con NaN y reordeono con reset_index
+
+    df = df.dropna()
+    df = df.reset_index(drop=True)
 
 
 def seleccionar_features(df: pd.DataFrame) -> tuple:
@@ -192,14 +265,52 @@ def seleccionar_features(df: pd.DataFrame) -> tuple:
     Returns:
         (X, y) - Features y target como arrays/DataFrames
     """
+
+    df = df.copy()
+
+    target_col = ["proxima_jugada_j2"]
+
     # TODO: Selecciona las columnas de features
     # feature_cols = ['feature1', 'feature2', ...]
+
+    feature_cols = [
+        "freq_j2_piedra",
+        "freq_j2_papel",
+        "freq_j2_tijera",
+
+        "freq_j2_piedra_5",
+        "freq_j2_papel_5",
+        "freq_j2_tijera_5",
+
+        "j2_lag1",
+        "j2_lag2",
+        "j2_lag3",
+
+        "j1_lag1",
+        "j1_lag2",
+
+        "resultado_anterior",
+
+        "racha",
+
+        "var_lag1",
+        "var_lag2",
+        "var_lag3",
+    ]
+
+
 
     # TODO: Crea X (features) e y (target)
     # X = df[feature_cols]
     # y = df['proxima_jugada_j2']
 
-    pass  # Elimina esta linea cuando implementes
+    X = df[feature_cols].copy()
+    y = df[target_col].copy()
+
+    X = X.dropna()
+    y = y.loc[X.index]
+
+    return X, y
 
 
 # =============================================================================
